@@ -22,7 +22,7 @@ struct Request {
     llhttp_t parser;
     char buf[65535+8];
     std::map<std::string, std::string> headers;
-    std::string uri; // init after
+    std::string uri;
     SOCKET client;
     struct {
         size_t length;
@@ -41,8 +41,9 @@ namespace Websocket {
     };
 }
 
-constexpr const char* indexHtml = "HTTP/1.1 200 OK" CRLF
-                                  "Content-Type: text/html" CRLF CRLF
+constexpr const char* indexHtml = \
+"HTTP/1.1 200 OK" CRLF
+"Content-Type: text/html" CRLF CRLF
 "<!DOCTYPE html>\
 <html>\
 <head>\
@@ -54,7 +55,7 @@ constexpr const char* indexHtml = "HTTP/1.1 200 OK" CRLF
 </head>\
 <body>\
 <script type=\"text/javascript\">\
-    var ws = new WebSocket(\"ws://192.168.0.103\");\
+    var ws = new WebSocket(\"ws://localhost\");\
     ws.onopen = ()=>{\
         terminal.write('terminal is ready...\\n');\
     };\

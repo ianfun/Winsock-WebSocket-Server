@@ -1,3 +1,24 @@
+void writeFrame(struct Request* ctx, Websocket::Opcode op, const void* msg, ULONG length){
+	ULONG hsize = 2;
+	ctx->buf[0] = 0b10000000 | BYTE(op);
+	if (length < 126){
+		ctx->buf[1] = (BYTE)length;
+	}else if (length < 0b10000000000000000){
+		hsize += 2;
+		ctx->buf[1] = 126;
+		ctx->buf[2] = (BYTE)(length >> 8);
+		ctx->buf[3] = (BYTE)length;
+	}else{
+		ctx->buf[1] = 127;
+		hsize += 8;
+		*(unsigned __int64*)ctx->buf[2] = htonll(length);
+	}
+	memcpy(ctx->buf+hsize, msg, length);
+	hsize += length;
+	assert(sendall(ctx->client, ctx->buf, hsize));
+	printf("send %d bytes\n", hsize);
+}
+
 const char* mainloop(struct Request *ctx){
 	/*
 	small: 1(pin*1+rsv*3+opcode*4) + 1(has_mask*1+length*7) + 4(mask) = 6 bytes
@@ -64,5 +85,6 @@ const char* mainloop(struct Request *ctx){
 			payload[i] = payload[i] ^ mask[i % 4];
 			putchar(payload[i]);
 		}
+		writeFrame(ctx, op, payload, (ULONG)payload_len);
 	}
 }
