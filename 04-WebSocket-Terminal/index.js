@@ -1,10 +1,15 @@
 var terminal;
-var ws = new WebSocket("ws://localhost", prompt("process name(e.g. wsl, bash, cmd, powershell)", "cmd"));
+this.onerror = alert;
+cmd = prompt("process name(e.g. wsl, bash, cmd, powershell)", "cmd");
+if (!cmd) {
+    throw "error: user refuse to enter process name";
+}
+var ws = new WebSocket('ws://' + location.host, cmd);
 ws.onopen = () => {
     terminal.write('* * * connection established * * *\r\n');
 };
 terminal = new Terminal({
-    fontFamily: "'Lucida Console','Source Code Pro', 'monospace'",
+    fontFamily: "'Source Sans Pro', 'Lucida Console','Source Code Pro', 'monospace'",
     cursorBlink: true,
     scrollback: 1000,
     windowsMode: true,
@@ -12,7 +17,14 @@ terminal = new Terminal({
 
 });
 terminal.open(document.body);
-ws.onclose = e => { if (e.reason != '') { terminal.write("\r\n* * * connection closed * * *\r\n"); terminal.write(e.reason); } else { terminal.write('\r\n* * *connection closed...* * *'); } };
+ws.onclose = e => {
+    if (e.reason != '') {
+        terminal.write("\r\n* * * connection closed * * *\r\n"+e.reason);
+    }
+    else {
+        terminal.write('\r\n* * *connection closed...* * *\r\n' + e.code);
+    }
+};
 ws.onerror = console.error;
 ws.onmessage = (m) => {
     m.data.startsWith && terminal.write(m.data);

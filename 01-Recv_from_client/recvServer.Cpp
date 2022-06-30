@@ -116,7 +116,6 @@ int main()
 	BOOL ret = initHash();
 	assert(ret);
 	sockaddr_in ip4 {.sin_family=AF_INET, .sin_port=htons(80)};
-	ip4.sin_addr.s_addr=INADDR_ANY;
 	SOCKET server = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
 	if (server==INVALID_SOCKET)
 		return 1;
@@ -124,6 +123,7 @@ int main()
 		return 1;
 	if (listen(server, SOMAXCONN) == SOCKET_ERROR)
 		return 1;
+	puts("recv Server at http://localhost, ws://localhost");
 	for (;;) {
 		SOCKET client = accept(server, NULL, NULL);
 		Request* ctx = initSocket(client);
