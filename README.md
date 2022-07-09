@@ -1,21 +1,19 @@
 # Winsock-WebSocket-Server
 
-WebSocket(version 13) and HTTP/1.1 file server using [Winsock2](https://docs.microsoft.com/en-us/windows/win32/winsock/windows-sockets-start-page-2) and [Cryptography API](https://docs.microsoft.com/en-us/windows/win32/seccng/cng-portal)
+WebSocket(version 13) and HTTP/1.1 file server using [Winsock2](https://docs.microsoft.com/en-us/windows/win32/winsock/windows-sockets-start-page-2), [Cryptography API](https://docs.microsoft.com/en-us/windows/win32/seccng/cng-portal), ConPTY
 
 language: C++
+platform: Win64
 
 ## Features
 
 * use named pipe for async reading from child's process
 * use IOCP and `AcceptEx` for high performance
 
-## screenshots
+## Screenshots
 
-<img src="cmd.png">
-<img src="powershell.png">
-
-![](cmd.png)
-![](powershell.png)
+![windows command prompt](cmd.png)
+![wsl bash](bash.png)
 
 ## notes
 
