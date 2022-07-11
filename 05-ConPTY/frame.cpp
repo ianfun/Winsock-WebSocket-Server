@@ -1,26 +1,29 @@
-void websocketWrite(IOCP* ctx,  const char* msg, ULONG length, OVERLAPPED* ol, WSABUF wsaBuf[2], Websocket::Opcode op = Websocket::Binary) {
+void websocketWrite(IOCP* ctx, const char* msg, ULONG length, OVERLAPPED* ol, WSABUF wsaBuf[2], Websocket::Opcode op = Websocket::Binary) {
 	ULONG hsize = 2;
 	ctx->header[0] = 0b10000000 | BYTE(op);
-	if (length < 126){
+	if (length < 126) {
 		ctx->header[1] = (BYTE)length;
-	}else if (length < 0b10000000000000000){
+	}
+	else if (length < 0b10000000000000000) {
 		hsize += 2;
 		ctx->header[1] = 126;
 		ctx->header[2] = (BYTE)(length >> 8);
 		ctx->header[3] = (BYTE)length;
-	}else{
-		puts("error: data too long");
+	}
+	else {
+		log_puts("[client error] websocket: data too long");
 		return;
 	}
 	wsaBuf[0].buf = (char*)ctx->header;
 	wsaBuf[0].len = hsize;
-	wsaBuf[1].buf = (char*)msg; 
+	wsaBuf[1].buf = (char*)msg;
 	wsaBuf[1].len = length;
 	WSASend(ctx->client, wsaBuf, 2, NULL, 0, ol, NULL);
 	_ASSERT(_CrtCheckMemory());
 }
 
 void onRecvData(IOCP* ctx) {
+	_ASSERT(_CrtCheckMemory());
 	PBYTE mask = (PBYTE)ctx->buf;
 	PBYTE payload = mask + 4;
 	for (unsigned __int64 i = 0; i < ctx->payload_len; ++i) {
@@ -38,18 +41,51 @@ void onRecvData(IOCP* ctx) {
 		}break;
 		case Websocket::Close:
 		{
+			if (ctx->waitHandle) {
+				BOOL b = UnregisterWait(ctx->waitHandle);
+				// !important: UnregisterWait is necessary to prevent *heap is broken exception* in ClosePseudoConsole(ctx->hPC)
+				assert(b);
+				ctx->waitHandle = NULL;
+			}
+			_ASSERT(_CrtCheckMemory());
 #ifdef _DEBUG
 			if (ctx->payload_len >= 2) {
 				WORD code = ntohs(*(PWORD)payload);
-				printf("Websocket: closed frame: (code: %u, reason: %.*s)\n", code, (int)(ctx->payload_len-2), payload+2);
+				log_fmt("Websocket: closed frame: (code: %u, reason: %.*s)\n", code, (int)(ctx->payload_len - 2), payload + 2);
 				websocketWrite(ctx, (const char*)payload, (ULONG)ctx->payload_len, &ctx->sendOL, ctx->sendBuf, Websocket::Close);
 			}
 #endif
-			if (CancelSynchronousIo(ctx->hReadThread) == FALSE) {
-				assert(0);
+			if (ctx->hReadThread) {
+				if (CancelSynchronousIo(ctx->hReadThread) == FALSE) {
+					assert(0);
+				}
+				CloseHandle(ctx->hReadThread);
+				ctx->hReadThread = NULL;
 			}
-			if (CloseHandle(ctx->hProcess) == FALSE) {
-				assert(0);
+			if (ctx->hProcess) {
+				CloseHandle(ctx->hProcess);
+				ctx->hProcess = NULL;
+			}
+			if (ctx->hPC) {
+				ClosePseudoConsole(ctx->hPC);
+				ctx->hPC = NULL;
+			}
+			if (ctx->hStdIn) {
+				if (CloseHandle(ctx->hStdIn) == FALSE) {
+					assert(0);
+				}
+				ctx->hStdIn = NULL;
+			}
+			if (ctx->hStdOut) {
+				if (CloseHandle(ctx->hStdOut) == FALSE) {
+					assert(0);
+				}
+				ctx->hStdOut = NULL;
+			}
+			if (ctx->addrlist) {
+				DeleteProcThreadAttributeList(ctx->addrlist);
+				free(ctx->addrlist);
+				ctx->addrlist = NULL;
 			}
 		}return;
 		default: {
@@ -62,25 +98,26 @@ void onRecvData(IOCP* ctx) {
 	ctx->recvBuf[0].buf = ctx->buf;
 	WSARecv(ctx->client, ctx->recvBuf, 1, NULL, &ctx->dwFlags, &ctx->recvOL, NULL);
 	ctx->Reading6Bytes = true;
+	_ASSERT(_CrtCheckMemory());
 }
-void onRead6Complete(IOCP *ctx) {
+void onRead6Complete(IOCP* ctx) {
 	using namespace Websocket;
 	PBYTE data = (PBYTE)ctx->buf;
 	BIT FIN = data[0] & 0b10000000;
 	if (!FIN) {
-		puts("FIN MUST be 1");
+		log_puts("[client error] websocket: FIN MUST be 1");
 		CloseClient(ctx);
 		return;
 	}
 	ctx->op = Websocket::Opcode(data[0] & 0b00001111);
 	if (data[0] & 0b01110000) {
-		puts("RSV is not zero");
+		log_puts("[client error] websocket: RSV is not zero");
 		CloseClient(ctx);
 		return;
 	}
 	BIT hasmask = data[1] & 0b10000000;
 	if (!hasmask) {
-		puts("client MUST mask data");
+		log_puts("[client error] websocket: client MUST mask data");
 		CloseClient(ctx);
 		return;
 	}
@@ -113,8 +150,8 @@ void onRead6Complete(IOCP *ctx) {
 		ctx->Reading6Bytes = true;
 		return;
 	}
-	if (ctx->payload_len+6 > sizeof(ctx->buf)) {
-		puts("Error: data too large!");
+	if (ctx->payload_len + 6 > sizeof(ctx->buf)) {
+		log_puts("[client error] websocket: data too large!");
 		CloseClient(ctx);
 		return;
 	}
@@ -123,4 +160,5 @@ void onRead6Complete(IOCP *ctx) {
 	ctx->recvBuf[0].buf = (char*)precv;
 	ctx->dwFlags = MSG_WAITALL;
 	WSARecv(ctx->client, ctx->recvBuf, 1, NULL, &ctx->dwFlags, &ctx->recvOL, NULL);
+	_ASSERT(_CrtCheckMemory());
 }

@@ -3,21 +3,49 @@ DWORD __stdcall readLoop(LPVOID ctx);
 VOID NTAPI onProcessExit(PVOID context, BOOLEAN timeout) {
 	assert(timeout == 0);
 	IOCP* ctx = reinterpret_cast<IOCP*>(context);
-	if (CancelSynchronousIo(ctx->hReadThread) == FALSE) {
-		assert(0);
+	ctx->waitHandle = NULL;
+	if (ctx->hReadThread) {
+		if (CancelSynchronousIo(ctx->hReadThread) == FALSE) {
+			assert(0);
+		}
+		CloseHandle(ctx->hReadThread);
+		ctx->hReadThread = NULL;
 	}
-	DWORD dwExitCode;
-	const char* msg;
-	if (GetExitCodeProcess(ctx->hProcess, &dwExitCode)) {
-		msg = "process exit with code %u";
+	if (ctx->hProcess) {
+		DWORD dwExitCode;
+		const char* msg;
+		if (GetExitCodeProcess(ctx->hProcess, &dwExitCode)) {
+			msg = "process exit with code %u";
+		}
+		else {
+			msg = "process was exited(failed to get exit code)";
+		}
+		int n = snprintf(ctx->buf + 2, sizeof(ctx->buf) - 2, msg, dwExitCode);
+		websocketWrite(ctx, ctx->buf, n + 2, &ctx->sendOL, ctx->sendBuf, Websocket::Opcode::Close);
+		if (CloseHandle(ctx->hProcess) == FALSE) {
+			assert(0);
+		}ctx->hProcess = NULL;
 	}
-	else {
-		msg = "process was exited(failed to get exit code)";
+	if (ctx->hPC) {
+		ClosePseudoConsole(ctx->hPC);
+		ctx->hPC = NULL;
 	}
-	int n = snprintf(ctx->buf + 2, sizeof(ctx->buf) - 2, msg, dwExitCode);
-	websocketWrite(ctx, ctx->buf, n + 2, &ctx->sendOL, ctx->sendBuf, Websocket::Opcode::Close);
-	if (CloseHandle(ctx->hProcess) == FALSE) {
-		assert(0);
+	if (ctx->hStdIn) {
+		if (CloseHandle(ctx->hStdIn) == FALSE) {
+			assert(0);
+		}
+		ctx->hStdIn = NULL;
+	}
+	if (ctx->hStdOut) {
+		if (CloseHandle(ctx->hStdOut) == FALSE) {
+			assert(0);
+		}
+		ctx->hStdOut = NULL;
+	}
+	if (ctx->addrlist) {
+		DeleteProcThreadAttributeList(ctx->addrlist);
+		free(ctx->addrlist);
+		ctx->addrlist = NULL;
 	}
 }
 
@@ -32,8 +60,8 @@ BOOL spawn(WCHAR* cmd, IOCP* ctx) {
 				return FALSE;
 			}
 		}
-		if (INVALID_HANDLE_VALUE != hPipePTYOut) CloseHandle(hPipePTYOut);
-		if (INVALID_HANDLE_VALUE != hPipePTYIn) CloseHandle(hPipePTYIn);
+		CloseHandle(hPipePTYOut);
+		CloseHandle(hPipePTYIn);
 		{
 			STARTUPINFOEX st{};
 			size_t attrListSize{};
@@ -41,45 +69,48 @@ BOOL spawn(WCHAR* cmd, IOCP* ctx) {
 			InitializeProcThreadAttributeList(NULL, 1, 0, &attrListSize);
 			st.lpAttributeList =
 				reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(malloc(attrListSize));
-			if (st.lpAttributeList
-				&& InitializeProcThreadAttributeList(st.lpAttributeList, 1, 0, &attrListSize))
+			if (st.lpAttributeList)
 			{
-				if (UpdateProcThreadAttribute(st.lpAttributeList, 0, PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE, ctx->hPC, sizeof(HPCON), NULL, NULL)) {
-					PROCESS_INFORMATION proc{};
-					if (CreateProcessW(
-						NULL,
-						cmd,
-						NULL,
-						NULL,
-						FALSE,
-						EXTENDED_STARTUPINFO_PRESENT,
-						NULL,
-						NULL,
-						&st.StartupInfo,
-						&proc)) {
-						ctx->hReadThread = CreateThread(NULL, 0, readLoop, ctx, 0, 0);
-						if (ctx->hReadThread != NULL) {
-							if (RegisterWaitForSingleObject(
-								&ctx->waitHandle, 
-								proc.hProcess, 
-								onProcessExit, 
-								ctx, 
-								INFINITE, 
-								WT_EXECUTEONLYONCE | WT_EXECUTEINIOTHREAD
-							)==FALSE){
-								assert(0);
-								CloseHandle(proc.hProcess);
+				ctx->addrlist = st.lpAttributeList;
+				if (InitializeProcThreadAttributeList(st.lpAttributeList, 1, 0, &attrListSize)) {
+					if (UpdateProcThreadAttribute(st.lpAttributeList, 0, PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE, ctx->hPC, sizeof(HPCON), NULL, NULL)) {
+						PROCESS_INFORMATION proc{};
+						if (CreateProcessW(
+							NULL,
+							cmd,
+							NULL,
+							NULL,
+							FALSE,
+							EXTENDED_STARTUPINFO_PRESENT,
+							NULL,
+							NULL,
+							&st.StartupInfo,
+							&proc)) {
+							ctx->hReadThread = CreateThread(NULL, 0, readLoop, ctx, 0, 0);
+							if (ctx->hReadThread != NULL) {
+								if (RegisterWaitForSingleObject(
+									&ctx->waitHandle,
+									proc.hProcess,
+									onProcessExit,
+									ctx,
+									INFINITE,
+									WT_EXECUTEONLYONCE | WT_EXECUTEINIOTHREAD
+								) == FALSE) {
+									assert(0);
+									CloseHandle(proc.hProcess);
+								}
+								CloseHandle(proc.hThread);
+								ctx->hProcess = proc.hProcess;
+								return TRUE;
 							}
-							CloseHandle(proc.hThread);
-							ctx->hProcess = proc.hProcess;
-							return TRUE;
 						}
 					}
 				}
+				free((void*)st.lpAttributeList);
 			}
 		}
 	}
-	printf("Error: spwan() failed with error: %d\n", GetLastError());
+	log_fmt("Error: spwan() failed with error: %d\n", GetLastError());
 	return FALSE;
 }
 
@@ -96,7 +127,7 @@ DWORD __stdcall readLoop(LPVOID p) {
 #ifdef  _DEBUG
 			if (GetLastError() != ERROR_OPERATION_ABORTED) {
 				assert(0);
-		    }
+			}
 #endif //  DEBUG
 			break;
 		}

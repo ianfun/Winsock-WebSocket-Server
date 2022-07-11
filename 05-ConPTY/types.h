@@ -22,18 +22,21 @@ consteval ULONG cstrlen(const char* s) {
 	return res;
 }
 enum class State : unsigned __int8 {
-	AfterRecv, ReadStaticFile, SendPartFile, AfterSendHTML, AfterHandShake, WebSocketConnecting, AfterClose
+	AfterRecv, ReadStaticFile, SendPartFile, RecvNextRequest,ListDirRecvNextRequest, PostWritePartFile, POSTWaitFileData, AfterSendHTML, AfterHandShake, WebSocketConnecting, AfterClose
 };
 int http_on_header_field(llhttp_t* parser, const char* at, size_t length);
 int http_on_header_value(llhttp_t* parser, const char* at, size_t length);
 int http_on_url(llhttp_t* parser, const char* at, size_t length);
-
+int http_on_body(llhttp_t* parser, const char* at, size_t length);
+int http_on_header_complete(llhttp_t* parser);
 struct Parse_Data {
 	Parse_Data() : headers{}, uri{}, at{}, length{}, uriLen{}, rows{ 60 }, cols{ 30 } {
 		llhttp_settings_init(&settings);
 		settings.on_url = http_on_url;
 		settings.on_header_field = http_on_header_field;
 		settings.on_header_value = http_on_header_value;
+		settings.on_headers_complete = http_on_header_complete;
+		settings.on_body = http_on_body;
 		llhttp_init(&parser, HTTP_REQUEST, &settings);
 	};
 	llhttp_t parser;
@@ -47,11 +50,18 @@ struct Parse_Data {
 };
 
 struct IOCP {
+	Parse_Data p;
+	bool hasp;
+	UINT64 filesize;
 	COORD coord;
 	SOCKET client;
 	State state;
 	OVERLAPPED recvOL, sendOL;
+	/*
+	* sendOL is used in WSASend, while recvOL is used in ReadFile or WriteFile
+	*/
 	char buf[4096+64];
+	char padding; /*the EOS char*/
 	DWORD dwFlags;
 	WSABUF sendBuf[2], recvBuf[1], conpty[2];
 	bool Reading6Bytes;
@@ -64,9 +74,12 @@ struct IOCP {
 	HANDLE hReadThread;
 	HANDLE waitHandle;
 	HANDLE hProcess;
+	std::string* sbuf;
+	LPPROC_THREAD_ATTRIBUTE_LIST addrlist;
 };
 
 namespace HTTP_ERR_RESPONCE {
+	static char post_ok[] = "HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nOK, File Uploaded!";
 	static char sinternal_server_error[] = "HTTP/1.1 500 Internal Server Error\r\n"
 		"Connection: close\r\n"
 		"Content-Type: text/html; charset=utf-8\r\n"
